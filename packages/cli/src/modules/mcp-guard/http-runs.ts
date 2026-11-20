@@ -66,7 +66,7 @@ export class HttpRunRegistry {
 		await admin.seed(tenant, profile.placeholderSeed);
 		const token = await admin.issueMcpCredential(
 			tenant,
-			profile.name,
+			profile.gymService ?? profile.name,
 			profile.credentialKind,
 			profile.credentialField,
 		);
@@ -103,6 +103,7 @@ export class HttpRunRegistry {
 			llm: createPlanLlm({ ...model, fetch: withRequestSignal(model.fetch) }),
 			lookups: profile.lookups,
 			finalize: profile.finalize,
+			opaqueIds: profile.opaqueIds,
 		});
 		const router = new HttpGuardRouter({
 			upstream,
