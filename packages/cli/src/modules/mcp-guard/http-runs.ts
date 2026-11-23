@@ -129,6 +129,7 @@ export class HttpRunRegistry {
 			hydrator,
 			profile,
 			gymIds: state?.gymIds,
+			refs: profile.idMap ? async () => await admin.refs(tenant) : undefined,
 		});
 		const run: HttpRun = { tenant, lastUsed: Date.now(), router };
 		this.runs.set(runId, run);
