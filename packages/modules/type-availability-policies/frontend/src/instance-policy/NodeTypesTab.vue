@@ -72,6 +72,7 @@ onMounted(async () => {
 		:rows="rows"
 		:loading="loading || typeSummaries === null"
 		:search-placeholder="i18n.baseText('typeAvailabilityPolicies.instancePolicy.table.search.node')"
+		:no-match-text="i18n.baseText('typeAvailabilityPolicies.instancePolicy.table.noMatch.node')"
 		data-test-id="node-types-tab"
 		@change="changeAccess"
 		@open="(name) => emit('open', name)"
