@@ -270,10 +270,12 @@ import { EnterpriseWorkflowService } from '@/workflows/workflow.service.ee';
 import { isAgentsAccessEnabled } from './agents-access';
 import { extractResolvedNodeParameters } from './extract-resolved-node-parameters';
 import {
+	ENGINE_V2_STATUS_READ_TIMEOUT_MS,
 	type ExecutionWaitOutcome,
 	isEngineV2ExecutionUnsettled,
 	isEngineV2RunPaused,
 	pollEngineV2Execution,
+	untilTimeout,
 	waitForInstanceAiExecution,
 } from './instance-ai-execution-wait';
 import {
@@ -2419,7 +2421,10 @@ export class InstanceAiAdapterService {
 					return { kind: 'cancelled', reason: 'abort', message: 'Execution was cancelled' };
 				case 'timeout': {
 					// The end event can be lost, or the run waits in a way that is not a pause.
-					const status = await readEngineV2Status(executionId, workflowId).catch(() => undefined);
+					const status = await untilTimeout(
+						readEngineV2Status(executionId, workflowId),
+						ENGINE_V2_STATUS_READ_TIMEOUT_MS,
+					).catch(() => undefined);
 					if (status !== undefined && !isEngineV2ExecutionUnsettled(status)) {
 						return { kind: 'completed' };
 					}

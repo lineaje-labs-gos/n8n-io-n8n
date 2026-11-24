@@ -104,7 +104,10 @@ import {
 
 import { InstanceAiMcpRegistryService } from '../mcp';
 import type { InstanceContextService } from '../instance-context.service';
-import { isEngineV2RunPaused } from '../instance-ai-execution-wait';
+import {
+	ENGINE_V2_STATUS_READ_TIMEOUT_MS,
+	isEngineV2RunPaused,
+} from '../instance-ai-execution-wait';
 
 import {
 	extractExecutionResult,
@@ -8171,6 +8174,26 @@ describe('createExecutionAdapter on engine v2', () => {
 				expect(dataPlane.cancelExecution).toHaveBeenCalledWith(V2_ID);
 			},
 		);
+
+		it('stops the run after the status read limit when the time runs out and the read does not answer', async () => {
+			vi.useFakeTimers();
+			onTestFinished(() => {
+				vi.useRealTimers();
+			});
+			const { adapter, dataPlane, reader } = createV2Harness({ outcome: { kind: 'timeout' } });
+			reader.findOne.mockReturnValueOnce(new Promise(() => {}) as never);
+
+			const result = adapter.run('wf-1', undefined, { timeout: 300 });
+			await vi.advanceTimersByTimeAsync(ENGINE_V2_STATUS_READ_TIMEOUT_MS - 1);
+			expect(dataPlane.cancelExecution).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(1);
+
+			await expect(result).resolves.toMatchObject({
+				status: 'error',
+				error: expect.stringContaining('timed out'),
+			});
+			expect(dataPlane.cancelExecution).toHaveBeenCalledWith(V2_ID);
+		});
 
 		it('stops the run on the data plane when the caller aborts', async () => {
 			const { adapter, dataPlane, engineV2Runs } = createV2Harness({

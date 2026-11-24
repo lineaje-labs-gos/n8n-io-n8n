@@ -99,6 +99,8 @@ export async function waitForInstanceAiExecution(args: {
 
 export const ENGINE_V2_POLL_INTERVAL_MS = 250;
 
+export const ENGINE_V2_STATUS_READ_TIMEOUT_MS = 5_000;
+
 /**
  * Whether the Assistant treats a waiting engine v2 run as paused. A run that
  * accepts a resume request is paused. A run that only a deadline can end is
@@ -146,6 +148,20 @@ export async function pollEngineV2Execution(args: {
 			await sleep(ENGINE_V2_POLL_INTERVAL_MS, ended).catch(() => {});
 		}
 		return abortSignal?.aborted ? 'abort' : 'timeout';
+	} finally {
+		clearTimeout(timeoutId);
+	}
+}
+
+/** As `untilAborted`, but resolves with `undefined` after `timeoutMs`. */
+export async function untilTimeout<T>(
+	promise: Promise<T>,
+	timeoutMs: number,
+): Promise<T | undefined> {
+	const timeout = new AbortController();
+	const timeoutId = setTimeout(() => timeout.abort(), timeoutMs);
+	try {
+		return await untilAborted(promise, timeout.signal);
 	} finally {
 		clearTimeout(timeoutId);
 	}
