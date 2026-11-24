@@ -34,8 +34,9 @@ export class EngineV2RunService {
 	 *
 	 * It never cancels the run and never reads the data plane. On `timeout` or
 	 * `aborted`, the caller decides what to do with the run. Events can be lost,
-	 * so after a `timeout` the caller reads the status from the data plane. A run
-	 * that goes to `waiting` does not end the wait.
+	 * so after a `timeout` the caller reads the status from the data plane. With
+	 * `stopWhenWaiting`, the wait can end with `waiting`. The run then stays
+	 * paused or continues, so the caller must not treat it as ended.
 	 *
 	 * @throws {UnexpectedError} If the run does not go to engine v2.
 	 * @throws {OperationalError} If the watch cannot subscribe to the lifecycle events.

@@ -1,4 +1,10 @@
-import { ENGINE_V2_POLL_INTERVAL_MS, pollEngineV2Execution } from '../instance-ai-execution-wait';
+import { MAX_IN_PROCESS_WAIT_MS } from 'n8n-workflow';
+
+import {
+	ENGINE_V2_POLL_INTERVAL_MS,
+	isEngineV2RunPaused,
+	pollEngineV2Execution,
+} from '../instance-ai-execution-wait';
 
 /** Returns each status in turn, then the last one forever. */
 function statusSequence(...statuses: Array<string | undefined>) {
@@ -113,5 +119,31 @@ describe('pollEngineV2Execution', () => {
 		await expect(pollEngineV2Execution({ readStatus, timeoutMs: 1_000 })).rejects.toThrow(
 			'data plane error',
 		);
+	});
+});
+
+describe('isEngineV2RunPaused', () => {
+	const at = '2026-11-24T10:00:00.000Z';
+	const after = (ms: number) => new Date(Date.parse(at) + ms).toISOString();
+
+	it.each([
+		['a wait for a resume request', true, { awaitsRequest: true }],
+		['a deadline at the in-process limit', true, { lastDeadline: after(MAX_IN_PROCESS_WAIT_MS) }],
+		[
+			'a deadline just under the in-process limit',
+			false,
+			{ lastDeadline: after(MAX_IN_PROCESS_WAIT_MS - 1) },
+		],
+		['a wait only for a sub-execution', false, { awaitsSubExecution: true }],
+		['no deadline and no resume request', false, {}],
+		[
+			'a resume request with a short deadline',
+			true,
+			{ awaitsRequest: true, lastDeadline: after(1) },
+		],
+	])('reports %s as paused: %s', (_name, paused, wait) => {
+		expect(
+			isEngineV2RunPaused({ at, awaitsRequest: false, awaitsSubExecution: false, ...wait }),
+		).toBe(paused);
 	});
 });

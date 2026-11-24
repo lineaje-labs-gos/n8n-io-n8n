@@ -104,6 +104,7 @@ import {
 
 import { InstanceAiMcpRegistryService } from '../mcp';
 import type { InstanceContextService } from '../instance-context.service';
+import { isEngineV2RunPaused } from '../instance-ai-execution-wait';
 
 import {
 	extractExecutionResult,
@@ -7989,6 +7990,11 @@ describe('createExecutionAdapter on engine v2', () => {
 		},
 	};
 
+	const pausedOutcome: EngineV2CompletionOutcome = {
+		kind: 'waiting',
+		wait: { at: '2026-11-24T10:00:00.000Z', awaitsRequest: true, awaitsSubExecution: false },
+	};
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
@@ -8083,6 +8089,7 @@ describe('createExecutionAdapter on engine v2', () => {
 			expect(engineV2Runs.runAndWait).toHaveBeenCalledWith(expect.anything(), {
 				timeoutMs: 300,
 				abortSignal: undefined,
+				stopWhenWaiting: isEngineV2RunPaused,
 			});
 			// Only the read of the result, no status read.
 			expect(reader.findOne).toHaveBeenCalledTimes(1);
@@ -8091,6 +8098,16 @@ describe('createExecutionAdapter on engine v2', () => {
 			// No control-plane row exists, so no verification pins are pruned from one.
 			expect(mockExecutionPersistence.findSingleExecution).not.toHaveBeenCalled();
 			expect(mockExecutionPersistence.updateExistingExecution).not.toHaveBeenCalled();
+		});
+
+		it('reads the result of a run that pauses, and does not stop the run', async () => {
+			const { adapter, dataPlane, reader } = createV2Harness({ outcome: pausedOutcome });
+
+			const result = await adapter.run('wf-1', undefined, { timeout: 300 });
+
+			expect(result).toMatchObject({ executionId: V2_ID, status: 'success' });
+			expect(reader.findOne).not.toHaveBeenCalledWith(V2_ID, ['wf-1'], { includeData: false });
+			expect(dataPlane.cancelExecution).not.toHaveBeenCalled();
 		});
 
 		it.each(['success', 'waiting'])(
@@ -8206,6 +8223,15 @@ describe('createExecutionAdapter on engine v2', () => {
 			expect(engineV2Runs.runAndWait).toHaveBeenCalledTimes(1);
 			expect(reader.findOne).not.toHaveBeenCalledWith(V2_ID, ['wf-1'], { includeData: false });
 			expect(mockActiveExecutions.has).not.toHaveBeenCalled();
+		});
+
+		it('reports a step run that pauses as done, and does not stop the run', async () => {
+			const { runStep, dataPlane } = createV2Harness({ outcome: pausedOutcome });
+
+			const result = await runStep('wf-1', 'Send', { mockInput: [{ text: 'hello' }] });
+
+			expect(result).toMatchObject({ executionId: V2_ID, status: 'success' });
+			expect(dataPlane.cancelExecution).not.toHaveBeenCalled();
 		});
 
 		it('stops a step run that still runs when the time runs out', async () => {

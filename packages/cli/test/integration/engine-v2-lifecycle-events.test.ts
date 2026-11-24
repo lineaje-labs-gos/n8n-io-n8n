@@ -388,4 +388,17 @@ describe('waiting for the end of an engine v2 run', () => {
 		);
 		expect(Container.get(EngineV2ExecutionCompletions).isWatching(executionId)).toBe(false);
 	});
+
+	test('runs and resolves as waiting when the run reports a wait that the caller stops on', async () => {
+		startRunsThatWait();
+		const { data } = await manualRunData();
+
+		const { executionId, outcome } = await Container.get(EngineV2RunService).runAndWait(data, {
+			timeoutMs: 5_000,
+			stopWhenWaiting: ({ awaitsRequest }) => awaitsRequest,
+		});
+
+		expect(outcome).toEqual({ kind: 'waiting', wait });
+		expect(Container.get(EngineV2ExecutionCompletions).isWatching(executionId)).toBe(false);
+	});
 });

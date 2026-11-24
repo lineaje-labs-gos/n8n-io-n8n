@@ -83,6 +83,10 @@ describe('EngineV2RunService', () => {
 
 	it.each<EngineV2CompletionOutcome>([
 		{ kind: 'finished', status: 'error' },
+		{
+			kind: 'waiting',
+			wait: { at: '2026-11-24T10:00:00.000Z', awaitsRequest: true, awaitsSubExecution: false },
+		},
 		{ kind: 'timeout' },
 		{ kind: 'aborted' },
 	])('returns the id and the outcome $kind of the wait', async (outcome) => {
@@ -93,8 +97,12 @@ describe('EngineV2RunService', () => {
 		expect(result).toEqual({ executionId: watchedId(), outcome });
 	});
 
-	it('passes the timeout and the abort signal to the wait', async () => {
-		const waitOptions = { timeoutMs: 42, abortSignal: new AbortController().signal };
+	it('passes the timeout, the abort signal and the wait predicate to the wait', async () => {
+		const waitOptions = {
+			timeoutMs: 42,
+			abortSignal: new AbortController().signal,
+			stopWhenWaiting: () => true,
+		};
 
 		await runs.runAndWait(data, waitOptions);
 

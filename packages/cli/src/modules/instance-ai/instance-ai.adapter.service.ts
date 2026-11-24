@@ -272,6 +272,7 @@ import { extractResolvedNodeParameters } from './extract-resolved-node-parameter
 import {
 	type ExecutionWaitOutcome,
 	isEngineV2ExecutionUnsettled,
+	isEngineV2RunPaused,
 	pollEngineV2Execution,
 	waitForInstanceAiExecution,
 } from './instance-ai-execution-wait';
@@ -2410,12 +2411,14 @@ export class InstanceAiAdapterService {
 		): Promise<ExecutionWaitOutcome> => {
 			switch (outcome.kind) {
 				case 'finished':
+				// As in v1, a paused run counts as settled and is not cancelled.
+				case 'waiting':
 					return { kind: 'completed' };
 				case 'aborted':
 					await cancelEngineV2Run(executionId);
 					return { kind: 'cancelled', reason: 'abort', message: 'Execution was cancelled' };
 				case 'timeout': {
-					// The end event can be lost, and a run that waits sends none.
+					// The end event can be lost, or the run waits in a way that is not a pause.
 					const status = await readEngineV2Status(executionId, workflowId).catch(() => undefined);
 					if (status !== undefined && !isEngineV2ExecutionUnsettled(status)) {
 						return { kind: 'completed' };
@@ -2431,10 +2434,10 @@ export class InstanceAiAdapterService {
 		};
 
 		/**
-		 * Starts a run and waits for its end. On an abort, it cancels the run. On a
-		 * timeout, it cancels a v1 run. For an engine v2 run, it reads the status
-		 * once and cancels the run only if the run did not settle. An abandoned run
-		 * keeps a worker busy.
+		 * Starts a run and waits until it ends or, on engine v2, pauses. On an
+		 * abort, it cancels the run. On a timeout, it cancels a v1 run. For an
+		 * engine v2 run, it reads the status once and cancels the run only if the
+		 * run did not settle. An abandoned run keeps a worker busy.
 		 */
 		const startAndWait = async (
 			runData: IWorkflowExecutionDataProcess,
@@ -2456,6 +2459,7 @@ export class InstanceAiAdapterService {
 			const { executionId, outcome } = await engineV2Runs.runAndWait(runData, {
 				timeoutMs,
 				abortSignal,
+				stopWhenWaiting: isEngineV2RunPaused,
 			});
 			const waitOutcome = await settleEngineV2Wait(executionId, workflowId, outcome, timeoutMs);
 			return { executionId, waitOutcome };
