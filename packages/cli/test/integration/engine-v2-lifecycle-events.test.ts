@@ -27,6 +27,7 @@ import { createLifecycleEventCodec } from '@/modules/engine-v2/execution-channel
 import { LifecycleEventChannelSender } from '@/modules/engine-v2/execution-channel/lifecycle-event-sender';
 import { Push } from '@/push';
 import { EngineDataPlaneProxyService } from '@/services/engine-data-plane-proxy.service';
+import { EngineV2RunService } from '@/services/engine-v2-run.service';
 import { EngineV2PushRegistry } from '@/services/engine-v2-push-registry.service';
 import { Telemetry } from '@/telemetry';
 import { WorkflowRunner } from '@/workflow-runner';
@@ -93,7 +94,7 @@ const runEvents = (
 	{ type: 'execution:completed', executionId, workflowId, at },
 ];
 
-const manualRun = async (pushRef?: string, engineV2ExecutionId?: string) => {
+const manualRunData = async (pushRef?: string, engineV2ExecutionId?: string) => {
 	const workflow = await createWorkflow(
 		{
 			active: false,
@@ -113,6 +114,12 @@ const manualRun = async (pushRef?: string, engineV2ExecutionId?: string) => {
 		engineV2ExecutionId,
 		triggerToStartFrom: { name: TRIGGER_NAME },
 	};
+
+	return { workflow, data };
+};
+
+const manualRun = async (pushRef?: string, engineV2ExecutionId?: string) => {
+	const { workflow, data } = await manualRunData(pushRef, engineV2ExecutionId);
 
 	return { workflow, executionId: await Container.get(WorkflowRunner).run(data) };
 };
@@ -360,5 +367,25 @@ describe('waiting for the end of an engine v2 run', () => {
 		await expect(
 			watch.wait({ timeoutMs: 5_000, stopWhenWaiting: ({ awaitsRequest }) => awaitsRequest }),
 		).resolves.toEqual({ kind: 'waiting', wait });
+	});
+
+	test.each([
+		['without an editor', undefined, 'execution'],
+		['that an editor watches', 'push-1', 'all'],
+	])('runs and waits for the end of a run %s', async (_name, pushRef, subscriptionKind) => {
+		const { data } = await manualRunData(pushRef);
+
+		const { executionId, outcome } = await Container.get(EngineV2RunService).runAndWait(data, {
+			timeoutMs: 5_000,
+		});
+
+		expect(outcome).toEqual({ kind: 'finished', status: 'success' });
+		expect(startExecution).toHaveBeenCalledWith(
+			expect.objectContaining({
+				executionId,
+				lifecycleEventSubscription: { kind: subscriptionKind },
+			}),
+		);
+		expect(Container.get(EngineV2ExecutionCompletions).isWatching(executionId)).toBe(false);
 	});
 });
