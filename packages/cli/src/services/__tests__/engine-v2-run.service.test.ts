@@ -37,6 +37,7 @@ describe('EngineV2RunService', () => {
 		completions.watch.mockResolvedValue(watch);
 		runner.run.mockImplementation(async ({ engineV2ExecutionId }) => engineV2ExecutionId ?? '');
 		watch.wait.mockResolvedValue({ kind: 'finished', status: 'success' });
+		proxy.cancelExecution.mockResolvedValue(undefined);
 	});
 
 	it('routes a run as the dispatcher does', () => {
@@ -62,6 +63,7 @@ describe('EngineV2RunService', () => {
 		await expect(runs.runAndWait(data, options)).rejects.toBe(refusal);
 		expect(completions.watch).not.toHaveBeenCalled();
 		expect(runner.run).toHaveBeenCalledWith(data);
+		expect(proxy.cancelExecution).not.toHaveBeenCalled();
 	});
 
 	it('throws an UnexpectedError when the runner starts a run although engine v2 is not available', async () => {
@@ -118,13 +120,23 @@ describe('EngineV2RunService', () => {
 		);
 	});
 
-	it('stops the watch when the run does not start', async () => {
+	it('cancels the new execution, stops the watch and passes on the error when the start fails', async () => {
 		const failure = new Error('refused');
 		runner.run.mockRejectedValue(failure);
 
 		await expect(runs.runAndWait(data, options)).rejects.toBe(failure);
+		expect(proxy.cancelExecution).toHaveBeenCalledWith(watchedId());
 		expect(watch.stop).toHaveBeenCalledTimes(1);
 		expect(watch.wait).not.toHaveBeenCalled();
+	});
+
+	it('passes on the start error when the cancel after a failed start fails too', async () => {
+		const failure = new Error('start answer lost');
+		runner.run.mockRejectedValue(failure);
+		proxy.cancelExecution.mockRejectedValue(new Error('data plane down'));
+
+		await expect(runs.runAndWait(data, options)).rejects.toBe(failure);
+		expect(watch.stop).toHaveBeenCalledTimes(1);
 	});
 
 	it('starts no run when the watch fails', async () => {

@@ -32,11 +32,12 @@ export class EngineV2RunService {
 	/**
 	 * Starts an engine v2 run and waits for its end.
 	 *
-	 * It never cancels the run and never reads the data plane. On `timeout` or
-	 * `aborted`, the caller decides what to do with the run. Events can be lost,
-	 * so after a `timeout` the caller reads the status from the data plane. With
-	 * `stopWhenWaiting`, the wait can end with `waiting`. The run then stays
-	 * paused or continues, so the caller must not treat it as ended.
+	 * It never reads the data plane. It cancels the run only when the start
+	 * fails, because the data plane can save the run before the start fails. On
+	 * `timeout` or `aborted`, the caller decides what to do with the run. Events
+	 * can be lost, so after a `timeout` the caller reads the status from the data
+	 * plane. With `stopWhenWaiting`, the wait can end with `waiting`. The run
+	 * then stays paused or continues, so the caller must not treat it as ended.
 	 *
 	 * @throws {UnexpectedError} If the run does not go to engine v2.
 	 * @throws {OperationalError} If the watch cannot subscribe to the lifecycle events.
@@ -63,7 +64,7 @@ export class EngineV2RunService {
 		const executionId = createExecutionIdV2();
 		const watch = await Container.get(EngineV2ExecutionCompletions).watch(executionId);
 		try {
-			const startedId = await this.runner.run({ ...data, engineV2ExecutionId: executionId });
+			const startedId = await this.start(data, executionId);
 			if (startedId !== executionId) {
 				throw new UnexpectedError('Engine v2 started the run under a different id', {
 					extra: { executionId, startedId },
@@ -73,6 +74,19 @@ export class EngineV2RunService {
 			return { executionId, outcome: await watch.wait(options) };
 		} finally {
 			watch.stop();
+		}
+	}
+
+	private async start(data: IWorkflowExecutionDataProcess, executionId: ExecutionIdV2) {
+		try {
+			return await this.runner.run({ ...data, engineV2ExecutionId: executionId });
+		} catch (error) {
+			try {
+				await this.proxy.cancelExecution(executionId);
+			} catch {
+				// Usually no run exists under this id.
+			}
+			throw error;
 		}
 	}
 }
