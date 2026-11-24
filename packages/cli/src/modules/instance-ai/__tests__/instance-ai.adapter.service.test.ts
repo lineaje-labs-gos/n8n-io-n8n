@@ -104,10 +104,7 @@ import {
 
 import { InstanceAiMcpRegistryService } from '../mcp';
 import type { InstanceContextService } from '../instance-context.service';
-import {
-	ENGINE_V2_STATUS_READ_TIMEOUT_MS,
-	isEngineV2RunPaused,
-} from '../instance-ai-execution-wait';
+import { ENGINE_V2_CALL_TIMEOUT_MS, isEngineV2RunPaused } from '../instance-ai-execution-wait';
 
 import {
 	extractExecutionResult,
@@ -8184,7 +8181,7 @@ describe('createExecutionAdapter on engine v2', () => {
 			reader.findOne.mockReturnValueOnce(new Promise(() => {}) as never);
 
 			const result = adapter.run('wf-1', undefined, { timeout: 300 });
-			await vi.advanceTimersByTimeAsync(ENGINE_V2_STATUS_READ_TIMEOUT_MS - 1);
+			await vi.advanceTimersByTimeAsync(ENGINE_V2_CALL_TIMEOUT_MS - 1);
 			expect(dataPlane.cancelExecution).not.toHaveBeenCalled();
 			await vi.advanceTimersByTimeAsync(1);
 
@@ -8210,6 +8207,23 @@ describe('createExecutionAdapter on engine v2', () => {
 				expect.objectContaining({ abortSignal: controller.signal }),
 			);
 			expect(dataPlane.cancelExecution).toHaveBeenCalledWith(V2_ID);
+		});
+
+		it('reports the cancellation after the call limit when the stop does not answer', async () => {
+			vi.useFakeTimers();
+			onTestFinished(() => {
+				vi.useRealTimers();
+			});
+			const { adapter, dataPlane } = createV2Harness({ outcome: { kind: 'aborted' } });
+			dataPlane.cancelExecution.mockReturnValue(new Promise(() => {}));
+
+			const result = adapter.run('wf-1', undefined, { abortSignal: AbortSignal.abort() });
+			await vi.advanceTimersByTimeAsync(ENGINE_V2_CALL_TIMEOUT_MS);
+
+			await expect(result).resolves.toMatchObject({
+				status: 'error',
+				error: 'Execution was cancelled',
+			});
 		});
 
 		it('reports the cancellation when the stop fails because the run ended first', async () => {

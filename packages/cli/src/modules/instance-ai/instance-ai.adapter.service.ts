@@ -135,6 +135,7 @@ import {
 import { hasGlobalScope, type Scope } from '@n8n/permissions';
 import { LessThan } from '@n8n/typeorm';
 import { ensureError } from '@n8n/utils/errors/ensure-error';
+import { withTimeout } from '@n8n/utils/promise/with-timeout';
 import type { WorkflowJSON } from '@n8n/workflow-sdk';
 import { InstanceSettings } from 'n8n-core';
 import {
@@ -270,12 +271,11 @@ import { EnterpriseWorkflowService } from '@/workflows/workflow.service.ee';
 import { isAgentsAccessEnabled } from './agents-access';
 import { extractResolvedNodeParameters } from './extract-resolved-node-parameters';
 import {
-	ENGINE_V2_STATUS_READ_TIMEOUT_MS,
+	ENGINE_V2_CALL_TIMEOUT_MS,
 	type ExecutionWaitOutcome,
 	isEngineV2ExecutionUnsettled,
 	isEngineV2RunPaused,
 	pollEngineV2Execution,
-	untilTimeout,
 	waitForInstanceAiExecution,
 } from './instance-ai-execution-wait';
 import {
@@ -2398,9 +2398,14 @@ export class InstanceAiAdapterService {
 
 		const cancelEngineV2Run = async (executionId: ExecutionIdV2) => {
 			try {
-				await Container.get(EngineDataPlaneProxyService).cancelExecution(executionId);
+				await withTimeout(
+					Container.get(EngineDataPlaneProxyService).cancelExecution(executionId),
+					ENGINE_V2_CALL_TIMEOUT_MS,
+					() => new OperationalError('Cancelling the engine v2 run timed out'),
+				);
 			} catch {
-				// The run can settle between the end of the wait and the cancel.
+				// The run can settle between the end of the wait and the cancel, or the
+				// data plane does not answer in time.
 			}
 		};
 
@@ -2421,9 +2426,10 @@ export class InstanceAiAdapterService {
 					return { kind: 'cancelled', reason: 'abort', message: 'Execution was cancelled' };
 				case 'timeout': {
 					// The end event can be lost, or the run waits in a way that is not a pause.
-					const status = await untilTimeout(
+					const status = await withTimeout(
 						readEngineV2Status(executionId, workflowId),
-						ENGINE_V2_STATUS_READ_TIMEOUT_MS,
+						ENGINE_V2_CALL_TIMEOUT_MS,
+						() => new OperationalError('Reading the engine v2 run status timed out'),
 					).catch(() => undefined);
 					if (status !== undefined && !isEngineV2ExecutionUnsettled(status)) {
 						return { kind: 'completed' };
@@ -2442,7 +2448,9 @@ export class InstanceAiAdapterService {
 		 * Starts a run and waits until it ends or, on engine v2, pauses. On an
 		 * abort, it cancels the run. On a timeout, it cancels a v1 run. For an
 		 * engine v2 run, it reads the status once and cancels the run only if the
-		 * run did not settle. An abandoned run keeps a worker busy.
+		 * run did not settle. A status that it cannot read leads to a cancel. The
+		 * status read and the cancel have a time limit. An abandoned run keeps a
+		 * worker busy.
 		 */
 		const startAndWait = async (
 			runData: IWorkflowExecutionDataProcess,

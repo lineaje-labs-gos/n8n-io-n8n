@@ -99,7 +99,11 @@ export async function waitForInstanceAiExecution(args: {
 
 export const ENGINE_V2_POLL_INTERVAL_MS = 250;
 
-export const ENGINE_V2_STATUS_READ_TIMEOUT_MS = 5_000;
+/**
+ * The data plane client has no request timeout, so a stalled data plane must
+ * not hold up a tool call.
+ */
+export const ENGINE_V2_CALL_TIMEOUT_MS = 5_000;
 
 /**
  * Whether the Assistant treats a waiting engine v2 run as paused. A run that
@@ -111,7 +115,7 @@ export function isEngineV2RunPaused(wait: EngineV2ExecutionWait): boolean {
 	if (wait.awaitsRequest) return true;
 	if (wait.lastDeadline === undefined) return false;
 
-	// Both times come from the clock of the data plane.
+	// Both times come from the data plane, not from this process.
 	return Date.parse(wait.lastDeadline) - Date.parse(wait.at) >= MAX_IN_PROCESS_WAIT_MS;
 }
 
@@ -148,20 +152,6 @@ export async function pollEngineV2Execution(args: {
 			await sleep(ENGINE_V2_POLL_INTERVAL_MS, ended).catch(() => {});
 		}
 		return abortSignal?.aborted ? 'abort' : 'timeout';
-	} finally {
-		clearTimeout(timeoutId);
-	}
-}
-
-/** As `untilAborted`, but resolves with `undefined` after `timeoutMs`. */
-export async function untilTimeout<T>(
-	promise: Promise<T>,
-	timeoutMs: number,
-): Promise<T | undefined> {
-	const timeout = new AbortController();
-	const timeoutId = setTimeout(() => timeout.abort(), timeoutMs);
-	try {
-		return await untilAborted(promise, timeout.signal);
 	} finally {
 		clearTimeout(timeoutId);
 	}
