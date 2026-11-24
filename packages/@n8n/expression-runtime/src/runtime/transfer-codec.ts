@@ -6,6 +6,12 @@ import { transferTypeOf, TRANSFER_VALUE_KEY, unwrapTransferSentinels } from './t
 /** Names the wrapper the host puts around a value that holds markers. */
 export const HOST_VALUE_TYPE = 'HostValue';
 
+<<<<<<< HEAD
+=======
+/** Names the wrapper the host puts around data that holds no framing key. */
+export const HOST_DATA_TYPE = 'HostData';
+
+>>>>>>> 3dc18434 (fix(core): Correct the predictions and limits of batched reads of item data (no-changelog) (#44998))
 interface HostValue extends TransferSentinel {
 	[TRANSFER_VALUE_KEY]: unknown;
 }

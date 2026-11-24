@@ -6,6 +6,7 @@ import type {
 	QuickJSHandle,
 	QuickJSRuntime,
 	QuickJSWASMModule as QuickJSWasm,
+	VmCallResult,
 } from 'quickjs-emscripten-core';
 
 import type { RuntimeBridge, BridgeConfig, ExecuteOptions, Logger, WorkflowData } from '../types';
@@ -40,6 +41,12 @@ import {
 	reconstructError,
 	serializeError,
 } from './host-functions';
+<<<<<<< HEAD
+=======
+import { BATCH_READ_LIMITS, batchReadBudget, readBatchAtPath } from './batch-read';
+import type { BatchReadBudget } from './batch-read';
+import type { BatchRequest } from '../runtime/lazy-proxy';
+>>>>>>> 3dc18434 (fix(core): Correct the predictions and limits of batched reads of item data (no-changelog) (#44998))
 
 /**
  * The instantiated WASM module that new bridges use, cached after the first
@@ -1374,12 +1381,15 @@ export class QuickJsBridge implements RuntimeBridge {
 	 * (see execute()) instead of being set as VM globals: `execute()` can
 	 * re-enter synchronously (e.g. `$evaluateExpression`), and globals would
 	 * let the nested call's callbacks clobber the in-flight outer call's data
-	 * bindings. This mirrors IsolatedVmBridge's closure-scoped `$0`/`$1`/`$2`
+	 * bindings. This mirrors IsolatedVmBridge's closure-scoped `$0` to `$3`
 	 * evalClosureSync references.
 	 *
 	 * Callers must dispose the returned handles when the call completes.
 	 */
-	private createCallbackHandles(resolver: HostDataResolver): QuickJSHandle[] {
+	private createCallbackHandles(
+		resolver: HostDataResolver,
+		budget: BatchReadBudget,
+	): QuickJSHandle[] {
 		if (!this.vm) throw new Error('Context not initialized');
 
 		const vm = this.vm;
@@ -1412,6 +1422,28 @@ export class QuickJsBridge implements RuntimeBridge {
 			);
 
 			handles.push(
+<<<<<<< HEAD
+=======
+				vm.newFunction('__readBatchImpl', (pathHandle, startHandle, stepHandle, requestHandle) => {
+					try {
+						const result = readBatchAtPath(
+							resolver,
+							vm.dump(pathHandle) as string[],
+							vm.dump(startHandle) as number,
+							vm.dump(stepHandle) as number,
+							vm.dump(requestHandle) as BatchRequest,
+							BATCH_READ_LIMITS,
+							budget,
+						);
+						return this.hostValueToQuickJSHandle(result);
+					} catch (err) {
+						return this.hostValueToQuickJSHandle(serializeError(err));
+					}
+				}),
+			);
+
+			handles.push(
+>>>>>>> 3dc18434 (fix(core): Correct the predictions and limits of batched reads of item data (no-changelog) (#44998))
 				vm.newFunction('__callHostImpl', (msgHandle) => {
 					const rawMsg = vm.dump(msgHandle);
 					try {
@@ -1463,8 +1495,10 @@ export class QuickJsBridge implements RuntimeBridge {
 	 *
 	 * For primitives, uses the dedicated vm.newXxx() methods.
 	 * For complex objects (arrays, objects), uses JSON round-trip via evalCode.
+	 * A guest error while it builds the value, such as out of memory, comes back
+	 * as an error result, so the host function throws it in the guest.
 	 */
-	private hostValueToQuickJSHandle(value: unknown): QuickJSHandle {
+	private hostValueToQuickJSHandle(value: unknown): QuickJSHandle | VmCallResult<QuickJSHandle> {
 		if (!this.vm) throw new Error('Context not initialized');
 
 		// Building a value runs guest code, which a broken runtime must not do.
@@ -1484,8 +1518,7 @@ export class QuickJsBridge implements RuntimeBridge {
 		if (value instanceof Date) {
 			const dateResult = this.vm.evalCode(`(new Date(${value.getTime()}))`);
 			if (dateResult.error) {
-				dateResult.error.dispose();
-				return this.vm.undefined;
+				return { error: dateResult.error };
 			}
 			return dateResult.value;
 		}
@@ -1500,8 +1533,7 @@ export class QuickJsBridge implements RuntimeBridge {
 		jsonHandle.dispose();
 		unwrapFn.dispose();
 		if (result.error) {
-			result.error.dispose();
-			return this.vm.undefined;
+			return { error: result.error };
 		}
 		return result.value;
 	}
@@ -1537,7 +1569,8 @@ export class QuickJsBridge implements RuntimeBridge {
 		// and its cycle collector runs late. So the callbacks read the data from a
 		// resolver that `finally` disposes, else a finished call's data stays in memory.
 		const resolver = new HostDataResolver(data);
-		const callbackHandles = this.createCallbackHandles(resolver);
+		const budget = batchReadBudget(this.config.memoryLimit, BATCH_READ_LIMITS);
+		const callbackHandles = this.createCallbackHandles(resolver, budget);
 		// Push this call's deadline; the interrupt handler (set in initialize)
 		// interrupts on the earliest in-flight deadline. Popped in finally so a
 		// nested call can't leave the outer budget extended.
