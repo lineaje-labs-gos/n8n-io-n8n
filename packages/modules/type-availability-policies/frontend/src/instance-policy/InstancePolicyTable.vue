@@ -38,7 +38,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-	change: [name: string, access: PolicyAction];
+	/** `label` is the display name, for the review before a type in use is restricted. */
+	change: [name: string, access: PolicyAction, label: string];
 	open: [name: string];
 }>();
 
@@ -219,7 +220,7 @@ function onRowClick(_event: MouseEvent, { item }: { item: InstancePolicyTableRow
 }
 
 function onAccessChange(row: InstancePolicyTableRow, access: PolicyAction) {
-	if (access !== row.access) emit('change', row.name, access);
+	if (access !== row.access) emit('change', row.name, access, row.displayName);
 }
 </script>
 

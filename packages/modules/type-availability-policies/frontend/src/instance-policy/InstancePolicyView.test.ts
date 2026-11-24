@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import InstancePolicyView from './InstancePolicyView.vue';
 import { useInstancePolicyStore } from './instance-policy.store';
+import { useRestrictReviewStore } from './restrict-review/restrict-review.store';
 import { POLICIES_LANDING_VIEW } from '../type-availability-policies.constants';
 
 const { route, push, replace, fetchInstancePolicy, fetchInstanceAccess } = vi.hoisted(() => ({
@@ -395,5 +396,14 @@ describe('InstancePolicyView', () => {
 		await fireEvent.click(getByTestId('node-type-access-dialog'));
 
 		expect(replace).toHaveBeenCalledWith({ query: { tab: 'node' } });
+	});
+
+	it('cancels the open review and each review that still loads when the admin leaves', () => {
+		const { unmount } = setup();
+		const cancelAll = vi.spyOn(useRestrictReviewStore(), 'cancelAll');
+
+		unmount();
+
+		expect(cancelAll).toHaveBeenCalledTimes(1);
 	});
 });
