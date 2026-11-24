@@ -97,6 +97,7 @@ describe('EngineV2RunService', () => {
 		const result = await runs.runAndWait(data, options);
 
 		expect(result).toEqual({ executionId: watchedId(), outcome });
+		expect(proxy.cancelExecution).not.toHaveBeenCalled();
 	});
 
 	it('passes the timeout, the abort signal and the wait predicate to the wait', async () => {
@@ -153,5 +154,6 @@ describe('EngineV2RunService', () => {
 		await expect(runs.runAndWait(data, options)).rejects.toThrow(UnexpectedError);
 		expect(watch.wait).not.toHaveBeenCalled();
 		expect(watch.stop).toHaveBeenCalledTimes(1);
+		expect(proxy.cancelExecution).not.toHaveBeenCalled();
 	});
 });
