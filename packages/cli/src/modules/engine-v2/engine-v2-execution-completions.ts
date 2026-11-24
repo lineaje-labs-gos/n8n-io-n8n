@@ -114,7 +114,10 @@ class CompletionWatch implements EngineV2CompletionWatch {
 
 		const wait = this.unofferedWait;
 		this.unofferedWait = undefined;
-		if (wait && accepts(stopWhenWaiting, wait)) return { kind: 'waiting', wait };
+		const accepted = wait !== undefined && accepts(stopWhenWaiting, wait);
+		// A predicate can call `stop()`.
+		if (this.outcome) return this.outcome;
+		if (accepted) return { kind: 'waiting', wait };
 
 		return await new Promise((resolve) => {
 			const settle = (outcome: EngineV2CompletionOutcome) => {
