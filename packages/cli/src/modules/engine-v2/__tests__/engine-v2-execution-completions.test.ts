@@ -10,6 +10,7 @@ import type {
 import {
 	EngineV2ExecutionCompletions,
 	type EngineV2CompletionOutcome,
+	type EngineV2ExecutionWait,
 } from '../engine-v2-execution-completions';
 
 const executionId = 'exec-1';
@@ -18,6 +19,23 @@ const at = '2026-10-29T10:00:00.000Z';
 const ended = (
 	type: 'execution:completed' | 'execution:failed' | 'execution:cancelled',
 ): LifecycleEvent => ({ type, executionId, workflowId: 'wf-1', at });
+
+const requestWait: EngineV2ExecutionWait = { at, awaitsRequest: true, awaitsSubExecution: false };
+const subExecutionWait: EngineV2ExecutionWait = {
+	at,
+	awaitsRequest: false,
+	awaitsSubExecution: true,
+	lastDeadline: '2026-10-30T10:00:00.000Z',
+};
+
+const waiting = (wait: EngineV2ExecutionWait): LifecycleEvent => ({
+	type: 'execution:waiting',
+	executionId,
+	workflowId: 'wf-1',
+	...wait,
+});
+
+const always = () => true;
 
 describe('EngineV2ExecutionCompletions', () => {
 	const subscriptions = mock<EngineV2LifecycleSubscriptions>();
@@ -95,6 +113,72 @@ describe('EngineV2ExecutionCompletions', () => {
 		await expect(outcome).resolves.toEqual({ kind: 'timeout' });
 	});
 
+	it.each<[string, ((wait: EngineV2ExecutionWait) => boolean) | undefined]>([
+		['rejects it', () => false],
+		[
+			'throws',
+			() => {
+				throw new Error('predicate failed');
+			},
+		],
+		['is not given', undefined],
+	])(
+		'keeps a wait call pending through a wait when its predicate %s, until the execution ends',
+		async (_name, stopWhenWaiting) => {
+			const watch = await completions.watch(executionId);
+			const outcome = watch.wait({ timeoutMs: 1_000, stopWhenWaiting });
+
+			emit(waiting(requestWait));
+			emit(ended('execution:completed'));
+
+			await expect(outcome).resolves.toEqual({ kind: 'finished', status: 'success' });
+		},
+	);
+
+	it('offers a wait that arrived before any wait call to the next call only', async () => {
+		const watch = await completions.watch(executionId);
+		emit(waiting(requestWait));
+
+		await expect(watch.wait({ timeoutMs: 1_000, stopWhenWaiting: always })).resolves.toEqual({
+			kind: 'waiting',
+			wait: requestWait,
+		});
+		const second = watch.wait({ timeoutMs: 1_000, stopWhenWaiting: always });
+		await vi.advanceTimersByTimeAsync(1_000);
+		await expect(second).resolves.toEqual({ kind: 'timeout' });
+	});
+
+	it('offers a wait to each pending call, keeps it for no later call, and stays subscribed', async () => {
+		const watch = await completions.watch(executionId);
+		const forRequest = watch.wait({ timeoutMs: 1_000, stopWhenWaiting: (w) => w.awaitsRequest });
+		const forSubExecution = watch.wait({
+			timeoutMs: 1_000,
+			stopWhenWaiting: (w) => w.awaitsSubExecution,
+		});
+
+		emit(waiting(requestWait));
+		const later = watch.wait({ timeoutMs: 1_000, stopWhenWaiting: always });
+
+		await expect(forRequest).resolves.toEqual({ kind: 'waiting', wait: requestWait });
+		expect(completions.isWatching(executionId)).toBe(true);
+		expect(remove).not.toHaveBeenCalled();
+		emit(ended('execution:failed'));
+		const failed = { kind: 'finished', status: 'error' };
+		await expect(Promise.all([forSubExecution, later])).resolves.toEqual([failed, failed]);
+	});
+
+	it('ignores a wait that arrives after the end', async () => {
+		const watch = await completions.watch(executionId);
+
+		emit(ended('execution:completed'));
+		emit(waiting(requestWait));
+
+		await expect(watch.wait({ timeoutMs: 1_000, stopWhenWaiting: always })).resolves.toEqual({
+			kind: 'finished',
+			status: 'success',
+		});
+	});
+
 	it('keeps waiting when the timeout is above the largest delay of setTimeout', async () => {
 		const watch = await completions.watch(executionId);
 		const outcome = watch.wait({ timeoutMs: 2 ** 31 });
@@ -125,12 +209,21 @@ describe('EngineV2ExecutionCompletions', () => {
 			{ kind: 'timeout' },
 		],
 		['the signal aborts', async () => controller.abort(), { kind: 'aborted' }],
+		[
+			'the predicate accepts a wait',
+			async () => emit(waiting(subExecutionWait)),
+			{ kind: 'waiting', wait: subExecutionWait },
+		],
 	])(
 		'ends a pending wait, clears its timer and abort listener, and still records the end when %s',
 		async (_name, settle, expected) => {
 			const watch = await completions.watch(executionId);
 			const removeEventListener = vi.spyOn(controller.signal, 'removeEventListener');
-			const outcome = watch.wait({ timeoutMs: 1_000, abortSignal: controller.signal });
+			const outcome = watch.wait({
+				timeoutMs: 1_000,
+				abortSignal: controller.signal,
+				stopWhenWaiting: always,
+			});
 
 			await settle();
 

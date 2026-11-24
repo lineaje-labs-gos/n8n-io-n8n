@@ -333,4 +333,27 @@ describe('waiting for the end of an engine v2 run', () => {
 			expect(pushSend()).not.toHaveBeenCalled();
 		},
 	);
+
+	test('resolves the wait of a run as waiting when the run reports a wait that the caller stops on', async () => {
+		const wait = { at, awaitsRequest: true, awaitsSubExecution: false };
+		startExecution.mockImplementation(
+			async ({ executionId, workflowId }: StartExecutionRequest) => {
+				const [started] = runEvents(executionId, workflowId, 'set-id');
+				await lifecycleEventSender.send(
+					[started, { type: 'execution:waiting', executionId, workflowId, ...wait }],
+					new AbortController().signal,
+				);
+				return { executionId };
+			},
+		);
+		const executionId = createExecutionIdV2();
+		const watch = await Container.get(EngineV2ExecutionCompletions).watch(executionId);
+		onTestFinished(() => watch.stop());
+
+		await manualRun(undefined, executionId);
+
+		await expect(
+			watch.wait({ timeoutMs: 5_000, stopWhenWaiting: ({ awaitsRequest }) => awaitsRequest }),
+		).resolves.toEqual({ kind: 'waiting', wait });
+	});
 });
