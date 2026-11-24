@@ -15,7 +15,7 @@ import {
 import type { LifecycleEventPublisherFactory } from '../lifecycle-events';
 import { createResponseEmitter, type ExecutionResponseSender } from '../response-channel';
 import { runBatchStep, type BatchStepResult } from './batch-step';
-import type { OrchestrationMessage, StepReadyEvent, WorkQueue } from '../queue';
+import type { OrchestrationMessage, StepReadyEvent, WorkQueuePublisher } from '../queue';
 import type { ExecutionRecord, ExecutionStore } from './execution-store';
 import {
 	stepKeyId,
@@ -76,7 +76,7 @@ export class StepReadyHandler {
 	constructor(
 		private readonly executionStore: ExecutionStore,
 		private readonly stepStore: StepStore,
-		private readonly orchestrationQueue: WorkQueue<OrchestrationMessage>,
+		private readonly orchestrationQueue: WorkQueuePublisher<OrchestrationMessage>,
 		private readonly dependencies: ExternalDependencies,
 		private readonly lifecycleEventPublisherFactory: LifecycleEventPublisherFactory,
 		private readonly responseSender: ExecutionResponseSender,

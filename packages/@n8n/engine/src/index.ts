@@ -126,7 +126,8 @@ export type {
 	StepSettledEvent,
 	StepMessage,
 	StepReadyEvent,
-	WorkQueue,
+	WorkQueueConsumer,
+	WorkQueuePublisher,
 	RedisWorkQueues,
 	WorkQueuePublisherClient,
 } from './queue';

@@ -5,7 +5,7 @@ import {
 	LifecycleEventPublisherFactory,
 	type LifecycleEventPublisher,
 } from '../../lifecycle-events';
-import type { OrchestrationMessage, StepMessage, WorkQueue } from '../../queue';
+import type { OrchestrationMessage, StepMessage, WorkQueuePublisher } from '../../queue';
 import type { ExecutionResponseSender } from '../../response-channel';
 import type { CancelExecutionService } from '../cancel-execution.service';
 import type { ExecutionRecord, ExecutionStore } from '../execution-store';
@@ -150,12 +150,12 @@ function makeStepStore(
 	} satisfies StepStore;
 }
 
-function makeStepQueue(): WorkQueue<StepMessage> {
-	return { publish: vi.fn(), start: vi.fn(), stop: vi.fn() };
+function makeStepQueue(): WorkQueuePublisher<StepMessage> {
+	return { publish: vi.fn() };
 }
 
-function makeOrchestrationQueue(): WorkQueue<OrchestrationMessage> {
-	return { publish: vi.fn(), start: vi.fn(), stop: vi.fn() };
+function makeOrchestrationQueue(): WorkQueuePublisher<OrchestrationMessage> {
+	return { publish: vi.fn() };
 }
 
 /** A publisher fake; tests that care assert on `publish`. */
