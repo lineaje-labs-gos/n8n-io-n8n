@@ -209,6 +209,7 @@ import {
 import { License } from '@/license';
 import { LoadNodesAndCredentials } from '@/load-nodes-and-credentials';
 import { AgentsBuilderService } from '@/modules/agents/builder/agents-builder.service';
+import type { EngineV2CompletionOutcome } from '@/modules/engine-v2/engine-v2-execution-completions';
 
 import {
 	scopeCredentialProvider,
@@ -243,6 +244,7 @@ import { AiGatewayService } from '@/services/ai-gateway.service';
 import { AiPreferenceSettingsService } from '@/services/ai-preference-settings.service';
 import { writeAssistantPreference } from '@/services/ai-preference-write';
 import { EngineDataPlaneProxyService } from '@/services/engine-data-plane-proxy.service';
+import { EngineV2RunService } from '@/services/engine-v2-run.service';
 import { FolderService } from '@/services/folder.service';
 import {
 	getParameterOptionsCredentialReferences,
@@ -268,9 +270,9 @@ import { EnterpriseWorkflowService } from '@/workflows/workflow.service.ee';
 import { isAgentsAccessEnabled } from './agents-access';
 import { extractResolvedNodeParameters } from './extract-resolved-node-parameters';
 import {
+	type ExecutionWaitOutcome,
 	isEngineV2ExecutionUnsettled,
 	pollEngineV2Execution,
-	waitForEngineV2Execution,
 	waitForInstanceAiExecution,
 } from './instance-ai-execution-wait';
 import {
@@ -2391,35 +2393,70 @@ export class InstanceAiAdapterService {
 			return execution?.status;
 		};
 
+		const cancelEngineV2Run = async (executionId: ExecutionIdV2) => {
+			try {
+				await Container.get(EngineDataPlaneProxyService).cancelExecution(executionId);
+			} catch {
+				// The run can settle between the end of the wait and the cancel.
+			}
+		};
+
+		/** Maps the end of the wait for an engine v2 run, and stops a run that is still going. */
+		const settleEngineV2Wait = async (
+			executionId: ExecutionIdV2,
+			workflowId: string,
+			outcome: EngineV2CompletionOutcome,
+			timeoutMs: number,
+		): Promise<ExecutionWaitOutcome> => {
+			switch (outcome.kind) {
+				case 'finished':
+					return { kind: 'completed' };
+				case 'aborted':
+					await cancelEngineV2Run(executionId);
+					return { kind: 'cancelled', reason: 'abort', message: 'Execution was cancelled' };
+				case 'timeout': {
+					// The end event can be lost, and a run that waits sends none.
+					const status = await readEngineV2Status(executionId, workflowId).catch(() => undefined);
+					if (status !== undefined && !isEngineV2ExecutionUnsettled(status)) {
+						return { kind: 'completed' };
+					}
+					await cancelEngineV2Run(executionId);
+					return {
+						kind: 'cancelled',
+						reason: 'timeout',
+						message: `Execution timed out after ${timeoutMs}ms and was cancelled`,
+					};
+				}
+			}
+		};
+
 		/**
-		 * Waits for a run this adapter started, and stops it on a timeout or an
-		 * abort. An engine v2 run never registers in `ActiveExecutions`, so the
-		 * wait polls the data plane for it.
+		 * Starts a run and waits for its end. It stops the run on a timeout or an
+		 * abort: an abandoned run keeps a worker busy.
 		 */
-		const waitForRun = async (args: {
-			executionId: string;
-			workflowId: string;
-			timeoutMs: number;
-			abortSignal?: AbortSignal;
-		}) => {
-			const { executionId, workflowId, timeoutMs, abortSignal } = args;
-			if (!isExecutionIdV2(executionId)) {
-				return await waitForInstanceAiExecution({
+		const startAndWait = async (
+			runData: IWorkflowExecutionDataProcess,
+			args: { workflowId: string; timeoutMs: number; abortSignal?: AbortSignal },
+		): Promise<{ executionId: string; waitOutcome: ExecutionWaitOutcome }> => {
+			const { workflowId, timeoutMs, abortSignal } = args;
+			const engineV2Runs = Container.get(EngineV2RunService);
+			if (!engineV2Runs.routesToEngineV2(runData)) {
+				const executionId = await workflowRunner.run(runData);
+				const waitOutcome = await waitForInstanceAiExecution({
 					activeExecutions,
 					executionId,
 					timeoutMs,
 					abortSignal,
 				});
+				return { executionId, waitOutcome };
 			}
 
-			return await waitForEngineV2Execution({
-				readStatus: async () => await readEngineV2Status(executionId, workflowId),
-				stop: async () => {
-					await Container.get(EngineDataPlaneProxyService).cancelExecution(executionId);
-				},
+			const { executionId, outcome } = await engineV2Runs.runAndWait(runData, {
 				timeoutMs,
 				abortSignal,
 			});
+			const waitOutcome = await settleEngineV2Wait(executionId, workflowId, outcome, timeoutMs);
+			return { executionId, waitOutcome };
 		};
 
 		/**
@@ -2682,7 +2719,12 @@ export class InstanceAiAdapterService {
 				}
 
 				try {
-					const executionId = await workflowRunner.run(runData);
+					// Wait for completion with timeout / abort protection
+					const { executionId, waitOutcome } = await startAndWait(runData, {
+						workflowId,
+						timeoutMs,
+						abortSignal: options?.abortSignal,
+					});
 					const pruneVerificationPins = async (executedNodeNames?: string[]) => {
 						try {
 							await pruneUnreachedVerificationPinData({
@@ -2698,14 +2740,6 @@ export class InstanceAiAdapterService {
 							});
 						}
 					};
-
-					// Wait for completion with timeout / abort protection
-					const waitOutcome = await waitForRun({
-						executionId,
-						workflowId,
-						timeoutMs,
-						abortSignal: options?.abortSignal,
-					});
 
 					if (waitOutcome.kind === 'cancelled') {
 						const result = {
@@ -3062,10 +3096,7 @@ export class InstanceAiAdapterService {
 				}
 
 				try {
-					const executionId = await workflowRunner.run(runData);
-
-					const waitOutcome = await waitForRun({
-						executionId,
+					const { executionId, waitOutcome } = await startAndWait(runData, {
 						workflowId,
 						timeoutMs,
 						abortSignal: options?.abortSignal,

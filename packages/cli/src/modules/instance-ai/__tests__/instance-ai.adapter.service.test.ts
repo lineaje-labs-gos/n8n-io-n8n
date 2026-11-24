@@ -86,9 +86,12 @@ import {
 } from '@n8n/api-types';
 
 import { EngineV2ExecutionReader } from '@/executions/engine-v2-execution-reader.service';
+import type { ExecutionIdV2 } from '@/executions/execution-id';
 import { ExecutionListService } from '@/executions/execution-list.service';
 import type { ExecutionPersistence } from '@/executions/execution-persistence';
+import type { EngineV2CompletionOutcome } from '@/modules/engine-v2/engine-v2-execution-completions';
 import { EngineDataPlaneProxyService } from '@/services/engine-data-plane-proxy.service';
+import { EngineV2RunService } from '@/services/engine-v2-run.service';
 import { CredentialsPermissionChecker } from '@/executions/pre-execution-checks';
 import type { NodeCatalogService } from '@/node-catalog';
 import { pairAiGatewayServers } from '@/modules/mcp-registry/registry/mcp-registry-ai-gateway';
@@ -7986,13 +7989,15 @@ describe('createExecutionAdapter on engine v2', () => {
 	});
 
 	/**
-	 * A harness whose runner starts a v2 run. `statuses` are what the data plane
-	 * reports on each status read, the last one repeating.
+	 * A harness whose runner starts a v2 run, and whose wait for its end ends
+	 * with `outcome`. `statuses` are what the data plane reports on each status
+	 * read, the last one repeating.
 	 */
 	function createV2Harness(options?: {
 		statuses?: string[];
 		execution?: ReturnType<typeof makeExecution>;
 		readable?: boolean;
+		outcome?: EngineV2CompletionOutcome;
 	}) {
 		const harness = createRunAdapterForTests(v2Workflow, {
 			execution: makeExecution({ status: 'success' }),
@@ -8019,16 +8024,26 @@ describe('createExecutionAdapter on engine v2', () => {
 		dataPlane.isAvailable.mockReturnValue(true);
 		dataPlane.cancelExecution.mockResolvedValue({ cancelled: true, finishedAt: new Date() });
 		const executionList = mock<ExecutionListService>();
+		const engineV2Runs = mock<EngineV2RunService>();
+		engineV2Runs.routesToEngineV2.mockReturnValue(true);
+		engineV2Runs.runAndWait.mockImplementation(async (runData) => {
+			await harness.mockWorkflowRunner.run(runData);
+			return {
+				executionId: V2_ID as ExecutionIdV2,
+				outcome: options?.outcome ?? { kind: 'finished', status: 'success' },
+			};
+		});
 
 		vi.mocked(Container.get).mockImplementation(((token: unknown) => {
 			if (token === EngineV2ExecutionReader) return reader;
 			if (token === EngineDataPlaneProxyService) return dataPlane;
 			if (token === ExecutionListService) return executionList;
+			if (token === EngineV2RunService) return engineV2Runs;
 			return harness.mockExecutionPersistence;
 		}) as typeof Container.get);
 
 		const runStep = harness.adapter.runStep as NonNullable<typeof harness.adapter.runStep>;
-		return { ...harness, runStep, reader, dataPlane, executionList };
+		return { ...harness, runStep, reader, dataPlane, executionList, engineV2Runs };
 	}
 
 	describe('run()', () => {
@@ -8045,32 +8060,55 @@ describe('createExecutionAdapter on engine v2', () => {
 			expect(runData.pinData.Trigger).toBeDefined();
 		});
 
-		it('waits on the data plane and reads the result from it', async () => {
-			const { adapter, reader, mockActiveExecutions, mockExecutionPersistence } = createV2Harness({
-				statuses: ['running', 'success'],
-				execution: makeExecution({
-					status: 'success',
-					runData: { Trigger: [makeTaskData([{}])], Fetch: [makeTaskData([{ id: 1 }])] },
-				}),
-			});
+		it('waits for the end of the run without polling, and reads the result from the data plane', async () => {
+			const { adapter, reader, engineV2Runs, mockActiveExecutions, mockExecutionPersistence } =
+				createV2Harness({
+					execution: makeExecution({
+						status: 'success',
+						runData: { Trigger: [makeTaskData([{}])], Fetch: [makeTaskData([{ id: 1 }])] },
+					}),
+				});
 
 			const result = await adapter.run('wf-1', undefined, {
+				timeout: 300,
 				verificationPinData: { Fetch: [{ id: 1 }] },
 			});
 
 			expect(result).toMatchObject({ executionId: V2_ID, status: 'success' });
-			// Two status polls, then one read of the result.
-			expect(reader.findOne).toHaveBeenCalledTimes(3);
-			expect(reader.findOne).toHaveBeenCalledWith(V2_ID, ['wf-1'], { includeData: false });
-			expect(reader.findOne).toHaveBeenLastCalledWith(V2_ID, expect.any(Function));
+			expect(engineV2Runs.runAndWait).toHaveBeenCalledWith(expect.anything(), {
+				timeoutMs: 300,
+				abortSignal: undefined,
+			});
+			// Only the read of the result, no status read.
+			expect(reader.findOne).toHaveBeenCalledTimes(1);
+			expect(reader.findOne).toHaveBeenCalledWith(V2_ID, expect.any(Function));
 			expect(mockActiveExecutions.has).not.toHaveBeenCalled();
 			// No control-plane row exists, so no verification pins are pruned from one.
 			expect(mockExecutionPersistence.findSingleExecution).not.toHaveBeenCalled();
 			expect(mockExecutionPersistence.updateExistingExecution).not.toHaveBeenCalled();
 		});
 
-		it('stops the run on the data plane when the time runs out', async () => {
-			const { adapter, dataPlane } = createV2Harness({ statuses: ['running'] });
+		it.each(['success', 'waiting'])(
+			'reads the result of a run whose status is %s when the time runs out',
+			async (status) => {
+				const { adapter, dataPlane, reader } = createV2Harness({
+					outcome: { kind: 'timeout' },
+					statuses: [status],
+				});
+
+				const result = await adapter.run('wf-1', undefined, { timeout: 300 });
+
+				expect(result).toMatchObject({ executionId: V2_ID, status: 'success' });
+				expect(reader.findOne).toHaveBeenCalledWith(V2_ID, ['wf-1'], { includeData: false });
+				expect(dataPlane.cancelExecution).not.toHaveBeenCalled();
+			},
+		);
+
+		it('stops the run on the data plane when the time runs out and the run still runs', async () => {
+			const { adapter, dataPlane } = createV2Harness({
+				outcome: { kind: 'timeout' },
+				statuses: ['running'],
+			});
 
 			const result = await adapter.run('wf-1', undefined, { timeout: 300 });
 
@@ -8082,29 +8120,99 @@ describe('createExecutionAdapter on engine v2', () => {
 			expect(dataPlane.cancelExecution).toHaveBeenCalledWith(V2_ID);
 		});
 
+		it.each([
+			[
+				'fails',
+				(reader: ReturnType<typeof createV2Harness>['reader']) =>
+					reader.findOne.mockRejectedValueOnce(new Error('data plane down')),
+			],
+			[
+				'finds no execution',
+				(reader: ReturnType<typeof createV2Harness>['reader']) =>
+					reader.findOne.mockResolvedValueOnce(undefined),
+			],
+		])(
+			'stops the run when the time runs out and the status read %s',
+			async (_name, breakStatusRead) => {
+				const { adapter, dataPlane, reader } = createV2Harness({ outcome: { kind: 'timeout' } });
+				breakStatusRead(reader);
+
+				const result = await adapter.run('wf-1', undefined, { timeout: 300 });
+
+				expect(result).toMatchObject({
+					status: 'error',
+					error: expect.stringContaining('timed out'),
+				});
+				expect(dataPlane.cancelExecution).toHaveBeenCalledWith(V2_ID);
+			},
+		);
+
 		it('stops the run on the data plane when the caller aborts', async () => {
-			const { adapter, dataPlane } = createV2Harness({ statuses: ['running'] });
+			const { adapter, dataPlane, engineV2Runs } = createV2Harness({
+				outcome: { kind: 'aborted' },
+			});
 			const controller = new AbortController();
 			controller.abort();
 
 			const result = await adapter.run('wf-1', undefined, { abortSignal: controller.signal });
 
 			expect(result).toMatchObject({ status: 'error', error: 'Execution was cancelled' });
+			expect(engineV2Runs.runAndWait).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({ abortSignal: controller.signal }),
+			);
 			expect(dataPlane.cancelExecution).toHaveBeenCalledWith(V2_ID);
+		});
+
+		it('reports the cancellation when the stop fails because the run ended first', async () => {
+			const { adapter, dataPlane } = createV2Harness({ outcome: { kind: 'aborted' } });
+			dataPlane.cancelExecution.mockRejectedValue(new Error('already finished'));
+
+			const result = await adapter.run('wf-1', undefined, {
+				abortSignal: AbortSignal.abort(),
+			});
+
+			expect(result).toMatchObject({ status: 'error', error: 'Execution was cancelled' });
+		});
+
+		it('waits for a run that does not go to engine v2 as for any v1 run', async () => {
+			const { adapter, engineV2Runs, mockWorkflowRunner, mockActiveExecutions } = createV2Harness();
+			engineV2Runs.routesToEngineV2.mockReturnValue(false);
+			mockWorkflowRunner.run.mockResolvedValue('exec-1');
+
+			const result = await adapter.run('wf-1', undefined);
+
+			expect(result).toMatchObject({ executionId: 'exec-1' });
+			expect(mockActiveExecutions.has).toHaveBeenCalledWith('exec-1');
+			expect(engineV2Runs.runAndWait).not.toHaveBeenCalled();
 		});
 	});
 
 	describe('runStep()', () => {
-		it('waits on the data plane for a step run', async () => {
-			const { runStep, reader, mockActiveExecutions } = createV2Harness({
-				statuses: ['running', 'success'],
-			});
+		it('waits for the end of a step run without polling', async () => {
+			const { runStep, reader, engineV2Runs, mockActiveExecutions } = createV2Harness();
 
 			const result = await runStep('wf-1', 'Send', { mockInput: [{ text: 'hello' }] });
 
 			expect(result).toMatchObject({ executionId: V2_ID, status: 'success', inputMode: 'mocked' });
-			expect(reader.findOne).toHaveBeenCalledWith(V2_ID, ['wf-1'], { includeData: false });
+			expect(engineV2Runs.runAndWait).toHaveBeenCalledTimes(1);
+			expect(reader.findOne).not.toHaveBeenCalledWith(V2_ID, ['wf-1'], { includeData: false });
 			expect(mockActiveExecutions.has).not.toHaveBeenCalled();
+		});
+
+		it('stops a step run that still runs when the time runs out', async () => {
+			const { runStep, dataPlane } = createV2Harness({
+				outcome: { kind: 'timeout' },
+				statuses: ['running'],
+			});
+
+			const result = await runStep('wf-1', 'Send', { mockInput: [{ text: 'hello' }] });
+
+			expect(result).toMatchObject({
+				status: 'error',
+				error: expect.stringContaining('timed out'),
+			});
+			expect(dataPlane.cancelExecution).toHaveBeenCalledWith(V2_ID);
 		});
 
 		it('replays the run data of a past engine v2 execution', async () => {
