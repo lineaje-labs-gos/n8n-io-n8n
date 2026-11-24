@@ -334,8 +334,10 @@ describe('waiting for the end of an engine v2 run', () => {
 		},
 	);
 
-	test('resolves the wait of a run as waiting when the run reports a wait that the caller stops on', async () => {
-		const wait = { at, awaitsRequest: true, awaitsSubExecution: false };
+	const wait = { at, awaitsRequest: true, awaitsSubExecution: false };
+
+	/** The fake data plane starts the run, and the run starts to wait at once. */
+	const startRunsThatWait = () =>
 		startExecution.mockImplementation(
 			async ({ executionId, workflowId }: StartExecutionRequest) => {
 				const [started] = runEvents(executionId, workflowId, 'set-id');
@@ -346,6 +348,9 @@ describe('waiting for the end of an engine v2 run', () => {
 				return { executionId };
 			},
 		);
+
+	test('resolves the wait of a run as waiting when the run reports a wait that the caller stops on', async () => {
+		startRunsThatWait();
 		const executionId = createExecutionIdV2();
 		const watch = await Container.get(EngineV2ExecutionCompletions).watch(executionId);
 		onTestFinished(() => watch.stop());
