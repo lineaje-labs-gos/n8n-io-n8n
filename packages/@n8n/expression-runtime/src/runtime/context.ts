@@ -11,6 +11,7 @@ import {
 	readHostResult,
 	throwIfErrorSentinel,
 } from './lazy-proxy';
+import type { ReadBatch } from './lazy-proxy';
 import { jmesPath } from './jmespath';
 import { assign, defineProperty } from './intrinsics';
 import { decodeHostValue } from './transfer-codec';
@@ -113,6 +114,10 @@ type BridgeCallback = (...args: unknown[]) => unknown;
  *
  *   - `getValueAtPath`, `getArrayElement`: data-access primitives used by the
  *     lazy-proxy system. Hot path; one ivm.Callback each for minimum overhead.
+<<<<<<< HEAD
+=======
+ *   - `readBatch`: reads a batch of item data values in one call.
+>>>>>>> 3dc18434 (fix(core): Correct the predictions and limits of batched reads of item data (no-changelog) (#44998))
  *   - `callHost`: typed-RPC dispatcher. The in-isolate runtime constructs
  *     an envelope (e.g. `{ type: 'getNodeFirst', nodeName, ... }`) and the
  *     host-side dispatcher validates it with zod before routing to a handler.
@@ -121,13 +126,21 @@ type BridgeCallback = (...args: unknown[]) => unknown;
  *     dispatcher switch. The name reflects what this is: a synchronous
  *     host RPC, not a postMessage-style async send.
  *
+<<<<<<< HEAD
  * The bridge wires all three callbacks unconditionally before invoking
+=======
+ * The bridge wires all four callbacks unconditionally before invoking
+>>>>>>> 3dc18434 (fix(core): Correct the predictions and limits of batched reads of item data (no-changelog) (#44998))
  * `buildContext`, so the runtime treats them as present — no defensive
  * null/undefined checks at each call site.
  */
 export interface BridgeCallbacks {
 	getValueAtPath: BridgeCallback;
 	getArrayElement: BridgeCallback;
+<<<<<<< HEAD
+=======
+	readBatch: ReadBatch;
+>>>>>>> 3dc18434 (fix(core): Correct the predictions and limits of batched reads of item data (no-changelog) (#44998))
 	callHost: BridgeCallback;
 }
 

@@ -276,3 +276,18 @@ describe('unwrapTransferredValue', () => {
 		expect(second.message).toBe('original');
 	});
 });
+<<<<<<< HEAD
+=======
+
+describe('decodeHostValue with whole host data', () => {
+	it('keeps metadata keys and error flags in the data as data', () => {
+		const data = {
+			__isObject: true,
+			__keys: ['a'],
+			nested: { __isArray: true, __length: 2, __isError: true },
+		};
+
+		expect(decodeHostValue({ __n8nType: 'HostData', __value: data })).toBe(data);
+	});
+});
+>>>>>>> 3dc18434 (fix(core): Correct the predictions and limits of batched reads of item data (no-changelog) (#44998))

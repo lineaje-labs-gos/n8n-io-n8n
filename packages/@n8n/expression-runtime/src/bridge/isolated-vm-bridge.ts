@@ -7,6 +7,11 @@ import { readToAsciiCharmapJson } from '../extensions/to-ascii';
 import { TO_ASCII_CHARMAP_HOST_FUNCTION } from '../runtime/host-function-names';
 import type { ErrorSentinel } from '../runtime/lazy-proxy';
 import { unwrapTransferredValue } from '../runtime/transfer-codec';
+<<<<<<< HEAD
+=======
+import { BATCH_READ_LIMITS, batchReadBudget, readBatchAtPath } from './batch-read';
+import type { BatchReadBudget } from './batch-read';
+>>>>>>> 3dc18434 (fix(core): Correct the predictions and limits of batched reads of item data (no-changelog) (#44998))
 import { HostDataResolver } from './host-data-resolver';
 import {
 	dispatchHostCall,
@@ -343,6 +348,38 @@ export class IsolatedVmBridge implements RuntimeBridge {
 	}
 
 	/**
+<<<<<<< HEAD
+=======
+	 * Create an ivm.Callback that reads a batch of item data values in one call.
+	 *
+	 * Thin wrapper around the shared readBatchAtPath (see batch-read.ts);
+	 * errors are caught and returned as sentinels instead of crossing the
+	 * isolate boundary.
+	 *
+	 * @private
+	 */
+	private createReadBatchRef(resolver: HostDataResolver, budget: BatchReadBudget): ivm.Callback {
+		return new (getIvm().Callback)(
+			(pathArr: string[], start: number, step: number, request: BatchRequest) => {
+				try {
+					return readBatchAtPath(
+						resolver,
+						pathArr,
+						start,
+						step,
+						request,
+						BATCH_READ_LIMITS,
+						budget,
+					);
+				} catch (err) {
+					return serializeError(err);
+				}
+			},
+		);
+	}
+
+	/**
+>>>>>>> 3dc18434 (fix(core): Correct the predictions and limits of batched reads of item data (no-changelog) (#44998))
 	 * Create the ivm.Callback for the typed-RPC `callHost` channel.
 	 *
 	 * Thin wrapper around the shared dispatchHostCall (see host-functions.ts
@@ -416,11 +453,16 @@ export class IsolatedVmBridge implements RuntimeBridge {
 		// next isolated-vm call in the process, even after the isolate is disposed.
 		// So the callbacks read the data from a resolver that `finally` disposes.
 		const resolver = new HostDataResolver(data);
+		const budget = batchReadBudget(this.config.memoryLimit, BATCH_READ_LIMITS);
 
 		try {
 			const getValueAtPath = this.createGetValueAtPathRef(resolver);
 			const getArrayElement = this.createGetArrayElementRef(resolver);
 			const callHost = this.createCallHostRef(resolver);
+<<<<<<< HEAD
+=======
+			const readBatch = this.createReadBatchRef(resolver, budget);
+>>>>>>> 3dc18434 (fix(core): Correct the predictions and limits of batched reads of item data (no-changelog) (#44998))
 			const timezone = options?.timezone ? safeStringify(options.timezone) : 'undefined';
 
 			// Wrap transformed code so 'this' === the closure-scoped context.
