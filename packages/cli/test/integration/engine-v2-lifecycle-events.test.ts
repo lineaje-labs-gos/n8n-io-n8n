@@ -370,9 +370,9 @@ describe('waiting for the end of an engine v2 run', () => {
 	});
 
 	test.each([
-		['without an editor', undefined, 'execution'],
-		['that an editor watches', 'push-1', 'all'],
-	])('runs and waits for the end of a run %s', async (_name, pushRef, subscriptionKind) => {
+		['without an editor', undefined],
+		['that an editor watches', 'push-1'],
+	])('runs and waits for the end of a run %s', async (_name, pushRef) => {
 		const { data } = await manualRunData(pushRef);
 
 		const { executionId, outcome } = await Container.get(EngineV2RunService).runAndWait(data, {
@@ -383,7 +383,7 @@ describe('waiting for the end of an engine v2 run', () => {
 		expect(startExecution).toHaveBeenCalledWith(
 			expect.objectContaining({
 				executionId,
-				lifecycleEventSubscription: { kind: subscriptionKind },
+				lifecycleEventSubscription: { kind: 'all' },
 			}),
 		);
 		expect(Container.get(EngineV2ExecutionCompletions).isWatching(executionId)).toBe(false);
