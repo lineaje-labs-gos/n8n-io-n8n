@@ -2431,8 +2431,10 @@ export class InstanceAiAdapterService {
 		};
 
 		/**
-		 * Starts a run and waits for its end. It stops the run on a timeout or an
-		 * abort: an abandoned run keeps a worker busy.
+		 * Starts a run and waits for its end. On an abort, it cancels the run. On a
+		 * timeout, it cancels a v1 run. For an engine v2 run, it reads the status
+		 * once and cancels the run only if the run did not settle. An abandoned run
+		 * keeps a worker busy.
 		 */
 		const startAndWait = async (
 			runData: IWorkflowExecutionDataProcess,
@@ -2719,7 +2721,6 @@ export class InstanceAiAdapterService {
 				}
 
 				try {
-					// Wait for completion with timeout / abort protection
 					const { executionId, waitOutcome } = await startAndWait(runData, {
 						workflowId,
 						timeoutMs,

@@ -5881,7 +5881,11 @@ function createRunAdapterForTests(
 	};
 	const mockExecutionPersistence = mock<ExecutionPersistence>();
 	mockExecutionPersistence.findSingleExecution.mockResolvedValue(options?.execution as never);
-	vi.spyOn(Container, 'get').mockReturnValue(mockExecutionPersistence);
+	const engineV2Runs = mock<EngineV2RunService>();
+	engineV2Runs.routesToEngineV2.mockReturnValue(false);
+	const getFromContainer = (token: unknown) =>
+		token === EngineV2RunService ? engineV2Runs : mockExecutionPersistence;
+	vi.spyOn(Container, 'get').mockImplementation(getFromContainer as typeof Container.get);
 	const mockWorkflowHistoryService = { getVersion: vi.fn() };
 	const mockTelemetry = { track: vi.fn() };
 
@@ -5959,6 +5963,7 @@ function createRunAdapterForTests(
 		mockTelemetry,
 		mockWorkflowRunner,
 		mockWorkflowHistoryService,
+		getFromContainer,
 	};
 }
 
@@ -6736,7 +6741,7 @@ describe('createExecutionAdapter run()', () => {
 			parameters: {},
 			position: [0, 0],
 		};
-		const { adapter, mockWorkflowRunner, mockExecutionPersistence, mockTelemetry } =
+		const { adapter, mockWorkflowRunner, getFromContainer, mockTelemetry } =
 			createRunAdapterForTests(
 				{ id: 'wf-1', settings: { errorWorkflow: 'error-wf-1' }, nodes: [scheduleNode] },
 				{
@@ -6763,7 +6768,7 @@ describe('createExecutionAdapter run()', () => {
 		vi.mocked(Container.get).mockImplementation(((token: unknown) =>
 			token === CredentialsPermissionChecker
 				? checker
-				: mockExecutionPersistence) as typeof Container.get);
+				: getFromContainer(token)) as typeof Container.get);
 
 		const result = await adapter.run('wf-1');
 
@@ -6788,7 +6793,7 @@ describe('createExecutionAdapter run()', () => {
 
 	it('refuses a run the user cannot make through their own access, before it starts', async () => {
 		const node = { id: 'n1', name: 'Send', type: 'n8n-nodes-base.slack', typeVersion: 1 };
-		const { adapter, mockWorkflowRunner, mockExecutionPersistence, mockTelemetry } =
+		const { adapter, mockWorkflowRunner, getFromContainer, mockTelemetry } =
 			createRunAdapterForTests({ id: 'wf-1', nodes: [node] }, { threadId: 'thread-1' });
 		const checker = mock<CredentialsPermissionChecker>();
 		const message = 'Node "Send" uses the credential "Bot", which you cannot use';
@@ -6797,7 +6802,7 @@ describe('createExecutionAdapter run()', () => {
 		vi.mocked(Container.get).mockImplementation(((token: unknown) =>
 			token === CredentialsPermissionChecker
 				? checker
-				: mockExecutionPersistence) as typeof Container.get);
+				: getFromContainer(token)) as typeof Container.get);
 
 		await expect(adapter.run('wf-1')).resolves.toEqual({
 			executionId: '',
@@ -7072,7 +7077,7 @@ describe('createExecutionAdapter runStep()', () => {
 		vi.mocked(Container.get).mockImplementation(((token: unknown) =>
 			token === CredentialsPermissionChecker
 				? checker
-				: harness.mockExecutionPersistence) as typeof Container.get);
+				: harness.getFromContainer(token)) as typeof Container.get);
 		const runStep = harness.adapter.runStep as NonNullable<typeof harness.adapter.runStep>;
 
 		await expect(runStep('wf-1', 'Send', undefined)).resolves.toMatchObject({
@@ -7155,7 +7160,7 @@ describe('createExecutionAdapter runStep()', () => {
 		vi.mocked(Container.get).mockImplementation(((token: unknown) =>
 			token === WorkflowVersionedSettingsService
 				? versionedSettings
-				: harness.mockExecutionPersistence) as typeof Container.get);
+				: harness.getFromContainer(token)) as typeof Container.get);
 		const runStep = harness.adapter.runStep as NonNullable<typeof harness.adapter.runStep>;
 
 		await runStep('wf-1', 'Send', { versionId: 'v-old' });
@@ -8104,21 +8109,24 @@ describe('createExecutionAdapter on engine v2', () => {
 			},
 		);
 
-		it('stops the run on the data plane when the time runs out and the run still runs', async () => {
-			const { adapter, dataPlane } = createV2Harness({
-				outcome: { kind: 'timeout' },
-				statuses: ['running'],
-			});
+		it.each(['new', 'running'])(
+			'stops the run on the data plane when the time runs out and its status is %s',
+			async (status) => {
+				const { adapter, dataPlane } = createV2Harness({
+					outcome: { kind: 'timeout' },
+					statuses: [status],
+				});
 
-			const result = await adapter.run('wf-1', undefined, { timeout: 300 });
+				const result = await adapter.run('wf-1', undefined, { timeout: 300 });
 
-			expect(result).toMatchObject({
-				executionId: V2_ID,
-				status: 'error',
-				error: 'Execution timed out after 300ms and was cancelled',
-			});
-			expect(dataPlane.cancelExecution).toHaveBeenCalledWith(V2_ID);
-		});
+				expect(result).toMatchObject({
+					executionId: V2_ID,
+					status: 'error',
+					error: 'Execution timed out after 300ms and was cancelled',
+				});
+				expect(dataPlane.cancelExecution).toHaveBeenCalledWith(V2_ID);
+			},
+		);
 
 		it.each([
 			[

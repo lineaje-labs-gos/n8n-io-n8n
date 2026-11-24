@@ -61,6 +61,15 @@ describe('EngineV2RunService', () => {
 
 		await expect(runs.runAndWait(data, options)).rejects.toBe(refusal);
 		expect(completions.watch).not.toHaveBeenCalled();
+		expect(runner.run).toHaveBeenCalledWith(data);
+	});
+
+	it('throws an UnexpectedError when the runner starts a run although engine v2 is not available', async () => {
+		proxy.isAvailable.mockReturnValue(false);
+		runner.run.mockResolvedValue('exec-1');
+
+		await expect(runs.runAndWait(data, options)).rejects.toThrow(UnexpectedError);
+		expect(completions.watch).not.toHaveBeenCalled();
 	});
 
 	it('watches the execution before it starts the run under the same id', async () => {

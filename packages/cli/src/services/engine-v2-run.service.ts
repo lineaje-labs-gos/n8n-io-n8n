@@ -38,6 +38,8 @@ export class EngineV2RunService {
 	 * that goes to `waiting` does not end the wait.
 	 *
 	 * @throws {UnexpectedError} If the run does not go to engine v2.
+	 * @throws {OperationalError} If the watch cannot subscribe to the lifecycle events.
+	 * @throws The errors of `WorkflowRunner.run` when the run does not start.
 	 */
 	async runAndWait(
 		data: IWorkflowExecutionDataProcess,
