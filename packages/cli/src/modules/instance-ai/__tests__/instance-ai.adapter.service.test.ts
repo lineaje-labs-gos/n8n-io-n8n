@@ -8101,11 +8101,14 @@ describe('createExecutionAdapter on engine v2', () => {
 		});
 
 		it('reads the result of a run that pauses, and does not stop the run', async () => {
-			const { adapter, dataPlane, reader } = createV2Harness({ outcome: pausedOutcome });
+			const { adapter, dataPlane, reader } = createV2Harness({
+				outcome: pausedOutcome,
+				execution: makeExecution({ status: 'waiting' }),
+			});
 
 			const result = await adapter.run('wf-1', undefined, { timeout: 300 });
 
-			expect(result).toMatchObject({ executionId: V2_ID, status: 'success' });
+			expect(result).toMatchObject({ executionId: V2_ID, status: 'waiting' });
 			expect(reader.findOne).not.toHaveBeenCalledWith(V2_ID, ['wf-1'], { includeData: false });
 			expect(dataPlane.cancelExecution).not.toHaveBeenCalled();
 		});
@@ -8262,12 +8265,15 @@ describe('createExecutionAdapter on engine v2', () => {
 			expect(mockActiveExecutions.has).not.toHaveBeenCalled();
 		});
 
-		it('reports a step run that pauses as done, and does not stop the run', async () => {
-			const { runStep, dataPlane } = createV2Harness({ outcome: pausedOutcome });
+		it('reports a step run that pauses as waiting, and does not stop the run', async () => {
+			const { runStep, dataPlane } = createV2Harness({
+				outcome: pausedOutcome,
+				execution: makeExecution({ status: 'waiting' }),
+			});
 
 			const result = await runStep('wf-1', 'Send', { mockInput: [{ text: 'hello' }] });
 
-			expect(result).toMatchObject({ executionId: V2_ID, status: 'success' });
+			expect(result).toMatchObject({ executionId: V2_ID, status: 'waiting' });
 			expect(dataPlane.cancelExecution).not.toHaveBeenCalled();
 		});
 

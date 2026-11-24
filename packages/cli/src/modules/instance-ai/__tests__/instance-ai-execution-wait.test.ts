@@ -1,5 +1,7 @@
 import { MAX_IN_PROCESS_WAIT_MS } from 'n8n-workflow';
 
+import type { EngineV2ExecutionWait } from '@/modules/engine-v2/engine-v2-execution-completions';
+
 import {
 	ENGINE_V2_POLL_INTERVAL_MS,
 	isEngineV2RunPaused,
@@ -126,24 +128,34 @@ describe('isEngineV2RunPaused', () => {
 	const at = '2026-11-24T10:00:00.000Z';
 	const after = (ms: number) => new Date(Date.parse(at) + ms).toISOString();
 
-	it.each([
-		['a wait for a resume request', true, { awaitsRequest: true }],
-		['a deadline at the in-process limit', true, { lastDeadline: after(MAX_IN_PROCESS_WAIT_MS) }],
+	it.each<[string, 'paused' | 'not paused', Partial<EngineV2ExecutionWait>]>([
+		['a wait for a resume request', 'paused', { awaitsRequest: true }],
+		[
+			'a deadline at the in-process limit',
+			'paused',
+			{ lastDeadline: after(MAX_IN_PROCESS_WAIT_MS) },
+		],
 		[
 			'a deadline just under the in-process limit',
-			false,
+			'not paused',
 			{ lastDeadline: after(MAX_IN_PROCESS_WAIT_MS - 1) },
 		],
-		['a wait only for a sub-execution', false, { awaitsSubExecution: true }],
-		['no deadline and no resume request', false, {}],
+		['a deadline at the start of the wait (a 0 s wait)', 'not paused', { lastDeadline: after(0) }],
+		['a wait only for a sub-execution', 'not paused', { awaitsSubExecution: true }],
+		[
+			'a sub-execution with a 10 min deadline',
+			'paused',
+			{ awaitsSubExecution: true, lastDeadline: after(10 * 60_000) },
+		],
+		['no deadline and no resume request', 'not paused', {}],
 		[
 			'a resume request with a short deadline',
-			true,
+			'paused',
 			{ awaitsRequest: true, lastDeadline: after(1) },
 		],
-	])('reports %s as paused: %s', (_name, paused, wait) => {
+	])('reports %s as %s', (_name, expected, wait) => {
 		expect(
 			isEngineV2RunPaused({ at, awaitsRequest: false, awaitsSubExecution: false, ...wait }),
-		).toBe(paused);
+		).toBe(expected === 'paused');
 	});
 });
