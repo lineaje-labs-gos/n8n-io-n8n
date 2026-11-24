@@ -7,6 +7,7 @@ import {
 	ParentExecutionEndedError,
 	type ExecutionRecord,
 	type ExecutionStore,
+	type ExecutionWaitSummary,
 	type NewExecutionRecord,
 	type PrunableExecution,
 	type PrunableExecutionQuery,
@@ -191,10 +192,14 @@ export class TypeOrmExecutionStore implements ExecutionStore {
 		return rows.map(({ id }) => id);
 	}
 
-	async refreshLiveStatus(id: string): Promise<void> {
+	async refreshLiveStatus(id: string): Promise<ExecutionWaitSummary | undefined> {
 		// The probes read the steps before the UPDATE takes the row's lock, so a
 		// step can change in between.
-		await this.repo.query(
+		//
+		// A raw UPDATE resolves to `[rows, rowCount]`.
+		const [rows] = await this.repo.manager.query<
+			[Array<ExecutionWaitSummary & { status: ExecutionStatus }>, number]
+		>(
 			// MATERIALIZED, because `live.runnable` is read three times below.
 			`WITH live AS MATERIALIZED (
 				SELECT
@@ -202,10 +207,13 @@ export class TypeOrmExecutionStore implements ExecutionStore {
 						SELECT 1 FROM workflow_step_execution
 						WHERE execution_id = $1 AND status IN ('queued', 'running')
 					) AS runnable,
-					EXISTS (
-						SELECT 1 FROM workflow_step_execution
-						WHERE execution_id = $1 AND status = 'waiting'
-					) AS waiting
+					count(*) > 0 AS waiting,
+					bool_or(wait_declaration->>'resumeBinding' IS NOT NULL) AS awaits_request,
+					bool_or(wait_declaration->>'subExecutionId' IS NOT NULL) AS awaits_sub_execution,
+					-- A wait without a deadline has no wait_till, so max() skips it.
+					max(wait_till) FILTER (WHERE wait_declaration->>'resumeBinding' IS NULL) AS last_deadline
+				FROM workflow_step_execution
+				WHERE execution_id = $1 AND status = 'waiting'
 			)
 			UPDATE workflow_execution e
 			SET status = CASE WHEN live.runnable THEN 'running' ELSE 'waiting' END,
@@ -217,9 +225,20 @@ export class TypeOrmExecutionStore implements ExecutionStore {
 				AND e.status IN ('running', 'waiting')
 				AND (live.runnable OR live.waiting)
 				-- Skip a write that changes nothing, so the row is not locked for it.
-				AND e.status IS DISTINCT FROM CASE WHEN live.runnable THEN 'running' ELSE 'waiting' END`,
+				AND e.status IS DISTINCT FROM CASE WHEN live.runnable THEN 'running' ELSE 'waiting' END
+			RETURNING
+				e.status,
+				e.updated_at AS "at",
+				live.awaits_request AS "awaitsRequest",
+				live.awaits_sub_execution AS "awaitsSubExecution",
+				live.last_deadline AS "lastDeadline"`,
 			[id],
 		);
+		const [row] = rows;
+		if (row?.status !== 'waiting') return undefined;
+
+		const { status: _status, ...wait } = row;
+		return wait;
 	}
 
 	async findPrunableExecutions({

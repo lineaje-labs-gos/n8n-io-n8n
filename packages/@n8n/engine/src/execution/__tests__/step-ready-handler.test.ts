@@ -9,7 +9,7 @@ import {
 } from '../../lifecycle-events';
 import { noopExecutionResponseSender, type ExecutionResponseSender } from '../../response-channel';
 import type { OrchestrationMessage, WorkQueue } from '../../queue';
-import type { ExecutionRecord, ExecutionStore } from '../execution-store';
+import type { ExecutionRecord, ExecutionStore, ExecutionWaitSummary } from '../execution-store';
 import {
 	stepKeyId,
 	type StepSlots,
@@ -1567,6 +1567,56 @@ describe('StepReadyHandler lifecycle events', () => {
 			...stepFields,
 		});
 	});
+
+	const awaitedSubExecution = {
+		executionId: 'exec-sub',
+		workflowId: 'wf-sub',
+		graph: { nodes: [], edges: [] },
+		workflow: {},
+		triggerOutputs: [],
+		awaited: true,
+	};
+
+	it.each([
+		['a wait', { wait: { resumeBinding: 'execution' } }, ['step:started', 'step:waiting']],
+		['an awaited sub-execution', { subExecution: awaitedSubExecution }, ['step:started']],
+	])(
+		'announces execution:waiting last when the step suspends on %s and the refresh changed the status to waiting',
+		async (_name, result, stepEventTypes) => {
+			const wait: ExecutionWaitSummary = {
+				at: new Date('2026-11-24T10:00:00.000Z'),
+				awaitsRequest: true,
+				awaitsSubExecution: false,
+				lastDeadline: null,
+			};
+			const executionStore = makeExecutionStore();
+			vi.mocked(executionStore.refreshLiveStatus).mockResolvedValue(wait);
+			const lifecycleEventPublisher = makeLifecycleEventPublisher();
+			const handler = makeHandler(
+				executionStore,
+				makeStepStore(),
+				makeQueue(),
+				{ v1StepExecutor: makeExecutor(result) },
+				lifecycleEventPublisher,
+			);
+
+			await handler.handle(event);
+
+			const published = vi.mocked(lifecycleEventPublisher.publish).mock.calls;
+			expect(published.map(([update]) => update.type)).toEqual([
+				...stepEventTypes,
+				'execution:waiting',
+			]);
+			expect(lifecycleEventPublisher.publish).toHaveBeenLastCalledWith({
+				type: 'execution:waiting',
+				executionId: 'exec-1',
+				workflowId: 'wf-1',
+				at: '2026-11-24T10:00:00.000Z',
+				awaitsRequest: true,
+				awaitsSubExecution: false,
+			});
+		},
+	);
 
 	it('announces no step:waiting for a suspension it did not record', async () => {
 		const lifecycleEventPublisher = makeLifecycleEventPublisher();

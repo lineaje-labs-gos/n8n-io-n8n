@@ -26,6 +26,14 @@ const every: LifecycleEvent[] = [
 	{ type: 'execution:completed', ...executionEvent },
 	{ type: 'execution:failed', ...executionEvent },
 	{ type: 'execution:cancelled', ...executionEvent },
+	{
+		type: 'execution:waiting',
+		...executionEvent,
+		awaitsRequest: false,
+		awaitsSubExecution: false,
+		lastDeadline: '2026-08-25T10:00:00.000Z',
+	},
+	{ type: 'execution:waiting', ...executionEvent, awaitsRequest: true, awaitsSubExecution: true },
 	{ type: 'step:started', ...stepEvent },
 	{ type: 'step:completed', ...stepEvent, outputs: [[{ json: { x: 1 } }], null] },
 	{ type: 'step:completed', ...stepEvent },
@@ -67,6 +75,19 @@ describe('lifecycleEventSchema', () => {
 	it('rejects an event type the engine cannot emit yet', () => {
 		expect(
 			lifecycleEventSchema.safeParse({ type: 'execution:paused', ...executionEvent }).success,
+		).toBe(false);
+	});
+
+	it.each([
+		['without the request flag', { awaitsSubExecution: false }],
+		[
+			'with a deadline that is not ISO-8601',
+			{ awaitsRequest: false, awaitsSubExecution: false, lastDeadline: 'tomorrow' },
+		],
+	])('rejects an execution:waiting event %s', (_name, fields) => {
+		expect(
+			lifecycleEventSchema.safeParse({ type: 'execution:waiting', ...executionEvent, ...fields })
+				.success,
 		).toBe(false);
 	});
 

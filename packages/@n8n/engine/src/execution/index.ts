@@ -34,6 +34,7 @@ export { ExecutionNotFoundError } from './execution-store';
 export type {
 	ExecutionRecord,
 	ExecutionStore,
+	ExecutionWaitSummary,
 	NewExecutionRecord,
 	PrunableExecution,
 	PrunableExecutionQuery,

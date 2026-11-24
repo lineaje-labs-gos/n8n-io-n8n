@@ -23,6 +23,7 @@ import {
 } from './execution.types';
 import { exitSourcesInto, loadTerminalIterations } from './loop-ledger';
 import { decideSuccessors, decisionKeys } from './settlement';
+import { refreshLiveStatusAndAnnounceWait } from './step-events';
 import type { StepRecord, StepStore } from './step-store';
 import {
 	collectSubExecutionResult,
@@ -90,7 +91,11 @@ export class StepSettledHandler {
 
 		// If this call just finished the execution, it is no longer live, and the
 		// refresh leaves it alone.
-		await this.executionStore.refreshLiveStatus(execution.id);
+		await refreshLiveStatusAndAnnounceWait(
+			this.executionStore,
+			this.lifecycleEventPublisherFactory,
+			execution,
+		);
 	}
 
 	private async failExecution(
