@@ -6,13 +6,13 @@ import { EngineV2LifecycleSubscriptions } from './engine-lifecycle-event-subscri
 
 type FinishedStatus = Extract<ExecutionStatus, 'success' | 'error' | 'canceled'>;
 
+type ExecutionWaitingEvent = Extract<LifecycleEvent, { type: 'execution:waiting' }>;
+
 /** What a paused execution waits for, as its `execution:waiting` event reports it. */
-export type EngineV2ExecutionWait = {
-	at: string;
-	awaitsRequest: boolean;
-	awaitsSubExecution: boolean;
-	lastDeadline?: string;
-};
+export type EngineV2ExecutionWait = Omit<
+	ExecutionWaitingEvent,
+	'type' | 'executionId' | 'workflowId'
+>;
 
 export type EngineV2CompletionOutcome =
 	| { kind: 'finished'; status: FinishedStatus }
@@ -27,6 +27,10 @@ export type EngineV2CompletionWaitOptions = {
 	 * Called for each wait the execution reports. Return true to end this `wait`
 	 * call with `waiting`. Without it, a wait never ends the call. A predicate
 	 * that throws counts as false.
+	 *
+	 * Each wait is offered once: to the calls pending when it arrives, or to the
+	 * next call if none is pending. A call that does not accept it does not keep
+	 * it for later calls.
 	 */
 	stopWhenWaiting?: (wait: EngineV2ExecutionWait) => boolean;
 };
@@ -66,7 +70,10 @@ function accepts(
 class CompletionWatch implements EngineV2CompletionWatch {
 	private outcome?: EngineV2CompletionOutcome;
 
-	/** The latest wait that arrived while no `wait` call was pending. The next call gets it first. */
+	/**
+	 * The latest wait that arrived while no `wait` call was pending. The next call
+	 * gets it first, unless a step starts before.
+	 */
 	private unofferedWait?: EngineV2ExecutionWait;
 
 	private removeListener?: () => void;
@@ -92,6 +99,8 @@ class CompletionWatch implements EngineV2CompletionWatch {
 		} else if (event.type === 'execution:waiting') {
 			const { type: _type, executionId: _executionId, workflowId: _workflowId, ...wait } = event;
 			this.offer(wait);
+		} else if (event.type === 'step:started') {
+			this.unofferedWait = undefined;
 		}
 	}
 
@@ -135,6 +144,8 @@ class CompletionWatch implements EngineV2CompletionWatch {
 		}
 
 		for (const [settle, stopWhenWaiting] of [...this.waiters]) {
+			// A predicate can call `stop()`, which settles every pending call.
+			if (this.outcome) return;
 			if (accepts(stopWhenWaiting, wait)) settle({ kind: 'waiting', wait });
 		}
 	}
